@@ -55,6 +55,8 @@ if 'processed' in st.session_state:
     def clean_lds(df):
         df = df.copy()
         df['DateTime'] = pd.to_datetime(df['Date'].astype(str) + ' ' + df['Time'].astype(str))
+        # Rename leak size and chainage columns to generic names used in the app logic
+        df.rename(columns={'Leak_Size_m3_hr': 'leak size', 'Chainage_Location_km': 'chainage'}, inplace=True)
         return df
 
     df_pidws = clean_pidws(df_pidws)
@@ -95,36 +97,55 @@ if 'processed' in st.session_state:
         fig, ax = plt.subplots(figsize=(8,5))
         ax.hist(df_pidws.chainage, alpha=0.6, label='PIDWS', color='orange')
         ax.hist(df_lds.chainage, alpha=0.6, label='Leaks', color='blue')
-        if len(pilferage):
-            ax.axvline(pilferage.chainage.mean(), color='red', ls='--', label='Pilferage')
+        if not pilferage.empty:
+            ax.axvline(pilferage.chainage.mean(), color='red', ls='--', label='Pilferage Mean Location')
         ax.legend()
         ax.set_xlabel('Chainage (km)')
+        ax.set_ylabel('Frequency')
         st.pyplot(fig)
 
     with col2:
         fig, ax = plt.subplots(figsize=(6,5))
-        df_lds.boxplot(column='leak size', by='is_pilferage', ax=ax)
-        ax.set_title('Leak Size by Type')
+        if not df_lds.empty:
+            sns.boxplot(column='leak size', by='is_pilferage', data=df_lds, ax=ax)
+            ax.set_title('Leak Size by Type')
+            ax.set_xlabel('Is Pilferage')
+            ax.set_ylabel('Leak Size')
+        else:
+            ax.text(0.5, 0.5, 'No LDS data to display', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+            ax.set_title('Leak Size by Type')
         st.pyplot(fig)
 
     # Timeline
     st.subheader("Timeline")
     fig, ax = plt.subplots(figsize=(12,6))
-    colors = ['red' if x else 'blue' for x in df_lds.is_pilferage]
-    sizes = np.clip(df_lds['leak size'], 30, 150)
-    ax.scatter(df_lds.DateTime, df_lds.chainage, c=colors, s=sizes, alpha=0.7)
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Chainage')
-    ax.grid(alpha=0.3)
-    ax.legend(['Pilferage', 'Other'])
-    plt.xticks(rotation=45)
+    if not df_lds.empty:
+        colors = ['red' if x else 'blue' for x in df_lds.is_pilferage]
+        # Ensure 'leak size' is numeric before clipping
+        df_lds['leak size'] = pd.to_numeric(df_lds['leak size'], errors='coerce').fillna(0)
+        sizes = np.clip(df_lds['leak size'], 30, 150)
+        ax.scatter(df_lds.DateTime, df_lds.chainage, c=colors, s=sizes, alpha=0.7)
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Chainage')
+        ax.grid(alpha=0.3)
+        handles = [plt.Line2D([0], [0], marker='o', color='w', label='Pilferage', markersize=8, markerfacecolor='red'),
+                   plt.Line2D([0], [0], marker='o', color='w', label='Other Leaks', markersize=8, markerfacecolor='blue')]
+        ax.legend(handles=handles)
+        plt.xticks(rotation=45)
+    else:
+        ax.text(0.5, 0.5, 'No LDS data to display', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+        ax.set_title('Leaks: Red=Pilferage, Blue=Other')
+
     st.pyplot(fig)
 
     # Table
-    if len(pilferage):
+    if not pilferage.empty:
         st.subheader("Top Pilferage Locations")
         top = pilferage.groupby('chainage')['leak size'].agg(['count','mean']).round(2).sort_values('count', ascending=False).head()
         st.dataframe(top)
+    else:
+        st.subheader("Top Pilferage Locations")
+        st.info("No pilferage detected based on current parameters.")
 
     # Download
     csv = df_lds.to_csv(index=False).encode('utf-8')
